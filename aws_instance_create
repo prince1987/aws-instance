@@ -1,0 +1,69 @@
+---
+- name: Play to create EC2 resource
+  hosts: localhost
+  vars:
+    aws_region: ap-southeast-1
+  tasks: 
+    - name: to create the vpc
+      ec2_vpc_net:
+        name: ansible_tower_vpc
+        cidr_block: 10.10.0.0/16
+        region: "{{ aws_region }}"
+        tenancy: default
+      register: ansible_tower_vpc
+
+    - name: create internet GW and associate to vpc
+      ec2_vpc_igw:
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        state: present
+      register: ansible_tower_igw
+
+    - name: create subnet in the vpc
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        cidr: 10.10.0.0/20
+        region: "{{ aws_region }}"
+      register: ansible_tower_subnet
+      
+    - name: set up piblic route table
+      ec2_vpc_route_table:
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        subnets:
+           - "{{ ansible_tower_subnet.subnet.id }}"
+        routes:
+           - dest: 0.0.0.0/0
+             gateway_id: "{{ ansible_tower_igw.gateway_id }}"
+             
+    - name: task to create AWS security group
+      ec2_group:
+        name: ansible_tower_sg
+        description: AWS security group for ansible tower demonstration
+        vpc_id: "{{ ansible_tower_vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            ports:
+              - 22
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all connection on port 22
+
+    - name: task to provision the RHEL EC2 instance
+      ec2:
+        region: "{{ aws_region }}"
+        key_name: ansible-tower-aws-key
+        instance_type: t2.medium
+        image: ami-000979d0952elea3a
+        wait: yes
+        group: ansible_tower_sg
+        count: 1
+        vpc_subnet_id: "{{ ansible_tower_subnet.subnet.id }}"
+        assign_public_ip: yes
+      register: ansible_tower_instance
+
+    - name: show rhel8 instance details
+      debug:
+        msg: "The rhel8 instance is accessible at {{ ansible_tower_instance[0].public_ip }}"
+...
